@@ -1,0 +1,56 @@
+[
+  {
+    "name": "qtdeclarative-6.12.0.tar.gz",
+    "url": "https://codeload.github.com/qt/qtdeclarative/tar.gz/refs/tags/v6.12.0",
+    "sha256": "0b71aa358703de8217177dbb620c86af9e9804482e607bb2cadbf116a65bd9c6",
+    "bytes": 43969647
+  },
+  {
+    "name": "qtimageformats-6.12.0.tar.gz",
+    "url": "https://codeload.github.com/qt/qtimageformats/tar.gz/refs/tags/v6.12.0",
+    "sha256": "9848d06aa4453cf583dc6ec4ec148ade05f3981c0f91b0961297385d3297b02a",
+    "bytes": 2362884
+  },
+  {
+    "name": "qtshadertools-6.12.0.tar.gz",
+    "url": "https://codeload.github.com/qt/qtshadertools/tar.gz/refs/tags/v6.12.0",
+    "sha256": "ced35453e0420193c345019ee8952af018fbab3fe04cf991a778fb8537907e86",
+    "bytes": 1884799
+  },
+  {
+    "name": "qtmultimedia-6.12.0.tar.gz",
+    "url": "https://codeload.github.com/qt/qtmultimedia/tar.gz/refs/tags/v6.12.0",
+    "sha256": "896543478b9dcdc1811e2960f74d926572cf5d97ce9ad7a53b6ea335cafe8561",
+    "bytes": 24979380
+  },
+  {
+    "name": "qtbase-6.12.0.tar.gz",
+    "url": "https://codeload.github.com/qt/qtbase/tar.gz/refs/tags/v6.12.0",
+    "sha256": "dff6570582c272cbe744d2e460700318262af505460f4215276459970ae31b46",
+    "bytes": 68693288
+  },
+  {
+    "name": "qtsvg-6.12.0.tar.gz",
+    "url": "https://codeload.github.com/qt/qtsvg/tar.gz/refs/tags/v6.12.0",
+    "sha256": "38d440c4e97c90ce4f5b76c65dcd63d716d2ef4852baa6fb0926fb94bb96ea66",
+    "bytes": 2629493
+  },
+  {
+    "name": "ffmpeg-9.0.1.tar.gz",
+    "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n9.0.1",
+    "sha256": "195d54bebe1a27f84d77f4b989d193466f305b355da92292766a69f16880b18a",
+    "bytes": 17306989
+  },
+  {
+    "name": "pyside-setup-6.12.0.tar.xz",
+    "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/pyside-setup-everywhere-src-6.12.0.tar.xz",
+    "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751",
+    "bytes": 18211772
+  },
+  {
+    "name": "zlib-1.3.1.tar.gz",
+    "url": "https://zlib.net/fossils/zlib-1.3.1.tar.gz",
+    "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+    "bytes": 1512791
+  }
+]
