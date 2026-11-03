@@ -55,10 +55,10 @@ is disabled.
 
 The Windows archive uses dynamically linked Qt/PySide/FFmpeg libraries; it is
 not a statically linked or sealed runtime. The release's
-`MikuTeto-Music-1.0.0-ThirdPartySources.zip` supplies the matching Qt module,
+`MikuTeto-Music-1.1.0-ThirdPartySources.zip` supplies the matching Qt module,
 PySide, FFmpeg and zlib source snapshots plus the exact installed Node package
 sources, original bridge modules and adaptation/build scripts. Download it
-from the same [release page](https://github.com/pishcolin/MikuTeto-Music/releases/tag/v1.0.0).
+from the same [release page](https://github.com/pishcolin/MikuTeto-Music/releases/tag/v1.1.0).
 Source URLs and SHA-256 hashes are in `licenses/source-downloads.json`.
 Build and replacement instructions are in [docs/BUILDING.md](docs/BUILDING.md).
 No separate restriction is imposed on debugging modifications to LGPL-covered

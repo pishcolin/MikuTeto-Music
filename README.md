@@ -33,7 +33,7 @@ Windows 原生桌面音乐播放器，把 QQ 音乐和网易云音乐放进同�
 
 需要 Windows 10 或 Windows 11（x64）。这是便携版，解压后即可运行。
 
-1. 打开 [最新版本](https://github.com/pishcolin/MikuTeto-Music/releases/latest)，下载 `MikuTeto-Music-1.0.0-Windows-x64.zip`。
+1. 打开 [最新版本](https://github.com/pishcolin/MikuTeto-Music/releases/latest)，下载 `MikuTeto-Music-1.1.0-Windows-x64.zip`。
 2. 解压到一个文件夹，保持里面的文件在一起。
 3. 运行 `MikuTetoMusic.exe`，用手机扫码登录你要使用的平台。
 
@@ -61,7 +61,7 @@ QQ 音乐的歌进 CD 仓，网易云音乐的歌进磁带仓。所以在 MIKU �
 - 显示同步歌词。
 - 播放中断后可以恢复。
 
-**连续电台（当前 main 源码，尚未包含在 v1.0.0 下载包中）**
+**连续电台（v1.1.0 起提供）**
 - MIKU 主题的“猜你喜欢”和 TETO 主题的“私人 FM”支持自动补歌，双击推荐歌曲也可以从这一首开始。
 - 推荐会去重，手动加入队列的歌曲优先；切换主题浏览不会中断电台。
 - 可以暂停、继续或停止续播。停止续播保留当前歌曲和队列；网络异常或连续播放失败时可重试。
