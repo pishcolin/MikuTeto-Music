@@ -74,14 +74,20 @@ modified LGPL dependencies.
 
 Python tests are in `tests`; run `python -m unittest discover -s tests`.
 The native CMake build with `-DMIKU_PLAYBACK_CHECKS=ON` produces
-`MikuMixedQueueChecks.exe`; run it with the Qt runtime DLLs on PATH and pass
+`MikuMixedQueueChecks.exe` and `MikuRadioChecks.exe`; run them with the Qt runtime DLLs on PATH and pass
 the path to a one-second silent WAV file as its first argument. For example:
 
 ```powershell
 python -c "import wave; w=wave.open('silence.wav','wb'); w.setparams((1,2,44100,0,'NONE','')); w.writeframes(bytes(88200)); w.close()"
 $env:PATH = 'C:\Qt\6.12.0\msvc2022_64\bin;' + $env:PATH
 .\build\native\MikuMixedQueueChecks.exe silence.wav
+.\build\native\MikuRadioChecks.exe silence.wav
 ```
+
+The radio checks use an offline service fixture and silent audio. They cover
+both providers, automatic refill, recent-track deduplication, bounded buffering,
+manual queue priority, pause during loading, late callbacks, account changes,
+failure/retry handling and natural track endings. No real account is needed.
 
 The source UI can also run with `python app.py --runtime <clean-runtime-path>`.
 
