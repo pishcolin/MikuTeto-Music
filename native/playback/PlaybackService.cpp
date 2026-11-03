@@ -28,8 +28,9 @@ InterfaceLaunch interfaceLaunch(const QString &root, const QString &executable, 
  * 自动切歌、恢复和系统媒体键始终由服务驱动。
  */
 PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offline, QObject *parent)
-    : QObject(parent), m_host(root, offline, nullptr, true), m_api(&m_host), m_player(&m_host, &m_api),
+    : QObject(parent), m_host(root, offline, nullptr, true), m_api(&m_host), m_player(&m_host, &m_api), m_radio(&m_host, &m_player),
       m_interfaceSession(interfaceLaunch(root, guiExecutable, offline)) {
+    m_player.onEnd = [this] { if (!m_radio.advance(1, true)) m_player.next(1, true); };
     connect(&m_interfaceSession, &InterfaceSession::activationRequested, this,
             [this] { send(m_gui, {{"event", "activate"}}); });
     connect(&m_interfaceSession, &InterfaceSession::stateChanged, this, &PlaybackService::publish);
@@ -50,11 +51,13 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
     });
     connect(&m_host, &Host::mediaAction, this, [this](QString action) {
         if (action == "resume" || action == "pause") {
-            m_player.setPaused(action == "pause");
+            if (m_radio.active()) m_radio.setPaused(action == "pause");
+            else m_player.setPaused(action == "pause");
         } else if (action == "toggle") {
-            m_player.toggle();
+            if (m_radio.active()) m_radio.setPaused(!m_radio.snapshot()["paused"].toBool());
+            else m_player.toggle();
         } else if (action == "prev" || action == "previous" || action == "next") {
-            m_player.next(action == "next" ? 1 : -1);
+            if (!m_radio.advance(action == "next" ? 1 : -1)) m_player.next(action == "next" ? 1 : -1);
         }
         publish();
     });
@@ -88,6 +91,7 @@ PlaybackService::PlaybackService(QString root, QString guiExecutable, bool offli
     m_poll.setInterval(250);
     connect(&m_poll, &QTimer::timeout, this, [this] {
         m_player.tick(m_clock.elapsed() / 1000.0, true);
+        m_radio.tick();
         publish();
     });
     m_poll.start();
@@ -160,6 +164,7 @@ void PlaybackService::publish() {
     auto snapshot = m_player.playbackSnapshot();
     snapshot["provider"] = m_api.provider;
     snapshot["mixedQueue"] = true;
+    snapshot["radio"] = m_radio.snapshot();
     QJsonObject qualities;
     for (const auto &provider : {QString("qq"), QString("netease")}) {
         auto value = m_host.preference("quality-" + provider);
@@ -282,6 +287,8 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
     } else if (method == "logout") {
         const auto provider = arguments["provider"].toString();
         if (provider == "qq" || provider == "netease") {
+            if (m_radio.active() && m_radio.snapshot()["provider"] == provider)
+                m_radio.stop(QStringLiteral("电台账号已退出，请登录后重新开启"));
             m_host.setCatalogProvider(provider);
             m_host.logout(false);
             m_player.accountLoggedOut(provider);
@@ -313,7 +320,14 @@ QJsonObject PlaybackService::hostCommand(const QString &method, const QJsonObjec
 }
 
 bool PlaybackService::playerCommand(const QString &method, const QJsonObject &arguments) {
-    if (method == "play") {
+    if (method == "radioStart") {
+        m_radio.start(arguments["provider"].toString(), arguments["track"].toObject());
+    } else if (method == "radioStop") {
+        m_radio.stop();
+    } else if (method == "radioRetry") {
+        m_radio.retry();
+    } else if (method == "play") {
+        m_radio.stop();
         m_player.play(
             arguments["track"].toObject(),
             arguments.contains("source") ? std::optional(arguments["source"].toArray()) : std::nullopt,
@@ -321,30 +335,38 @@ bool PlaybackService::playerCommand(const QString &method, const QJsonObject &ar
             arguments["preview"].toBool(),
             arguments.contains("resume") ? std::optional(arguments["resume"].toObject()) : std::nullopt);
     } else if (method == "playIndex") {
-        m_player.playIndex(arguments["index"].toInt(-1), arguments["key"].toString());
+        if (m_radio.active()) m_radio.select(arguments["index"].toInt(-1), arguments["key"].toString());
+        else m_player.playIndex(arguments["index"].toInt(-1), arguments["key"].toString());
     } else if (method == "move") {
         m_player.move(arguments["from"].toInt(-1), arguments["to"].toInt(-1), arguments["key"].toString());
     } else if (method == "enqueue") {
-        m_player.enqueue(arguments["track"].toObject(), arguments["next"].toBool());
+        if (m_radio.active()) m_radio.enqueue(arguments["track"].toObject(), arguments["next"].toBool());
+        else m_player.enqueue(arguments["track"].toObject(), arguments["next"].toBool());
     } else if (method == "toggle") {
-        m_player.toggle();
+        if (m_radio.active()) m_radio.setPaused(!m_radio.snapshot()["paused"].toBool());
+        else m_player.toggle();
     } else if (method == "pause") {
-        m_player.setPaused(arguments["paused"].toBool());
+        if (m_radio.active()) m_radio.setPaused(arguments["paused"].toBool());
+        else m_player.setPaused(arguments["paused"].toBool());
     } else if (method == "seek") {
         m_player.seek(arguments["value"].toDouble());
     } else if (method == "volume") {
         m_player.volume(arguments["value"].toDouble());
     } else if (method == "next") {
-        m_player.next(arguments["direction"].toInt(1), arguments["ended"].toBool());
+        if (!m_radio.advance(arguments["direction"].toInt(1), arguments["ended"].toBool()))
+            m_player.next(arguments["direction"].toInt(1), arguments["ended"].toBool());
     } else if (method == "remove") {
         m_player.remove(arguments["index"].toInt(-1));
     } else if (method == "clear") {
+        m_radio.stop();
         m_player.clearUpcoming();
     } else if (method == "stop") {
+        m_radio.stop();
         m_player.stop();
     } else if (method == "quality") {
         m_player.setQuality(arguments["value"].toString(), arguments["provider"].toString());
     } else if (method == "mode") {
+        m_radio.stop();
         m_player.setMode(arguments["value"].toString());
     } else if (method == "alternative") {
         m_player.setAlternative(arguments["enabled"].toBool());
@@ -417,6 +439,7 @@ void PlaybackService::shutdown() {
         return;
     }
     m_stopping = true;
+    m_radio.stop();
     m_poll.stop();
     m_save.stop();
     m_interfaceSession.stop();

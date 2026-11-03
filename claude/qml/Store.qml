@@ -156,6 +156,11 @@ Item {
     property int index: -1
     readonly property int queueIndex: index
     property string mode: "all"
+    property var radio: ({active: false, phase: "idle", upcoming: 0, error: ""})
+    readonly property bool radioActive: connected && !!radio.active
+    function startRadio(song) { control("player.radioStart", song ? {provider: provider, track: song} : {provider: provider}, reportError) }
+    function stopRadio() { control("player.radioStop", {}, reportError) }
+    function retryRadio() { control("player.radioRetry", {}, reportError) }
     property bool playing: false
     property real positionMs: 0
     property real durationMs: 0
@@ -224,6 +229,8 @@ Item {
 
         index = typeof s.index === "number" ? s.index : -1
         mode = s.mode ? String(s.mode) : "all"
+        if (backend.snapshotIsPatch !== true || update.hasOwnProperty("radio"))
+            radio = s.radio || {active: false, phase: "idle", upcoming: 0, error: ""}
         playing = connected && !!st.playing
         durationMs = T.num(st.duration) || (cur ? T.num(cur.duration) : 0)
         seekable = !!st.seekable

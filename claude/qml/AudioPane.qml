@@ -18,8 +18,8 @@ RetroPane {
     implicitHeight: ui.titleH + ui.border + col.implicitHeight + 2 * ui.pad
 
     readonly property string qualityText: (app.actualQuality !== "" ? app.actualQuality : app.quality).toUpperCase()
-    readonly property string modeLabel: app.mode === "one" ? "单曲循环" : (app.mode === "shuffle" ? "随机播放" : "列表循环")
-    readonly property string modeGlyph: app.mode === "one" ? "{loop}1" : (app.mode === "shuffle" ? "RND" : "{loop}")
+    readonly property string modeLabel: app.radioActive ? (app.radio.provider === "netease" ? "私人 FM" : "推荐电台") : app.mode === "one" ? "单曲循环" : (app.mode === "shuffle" ? "随机播放" : "列表循环")
+    readonly property string modeGlyph: app.radioActive ? "FM" : app.mode === "one" ? "{loop}1" : (app.mode === "shuffle" ? "RND" : "{loop}")
     readonly property string errorText: app.playError !== "" ? app.playError : (app.failed ? (app.status !== "" ? app.status : "这首歌没能播放") : "")
     readonly property var lyricNow: app.lyricIndex >= 0 && app.lyricIndex < app.lyricLines.length ? app.lyricLines[app.lyricIndex] : null
     readonly property string previewText: {
@@ -305,9 +305,9 @@ RetroPane {
                 tone: "line"
                 glyph: audio.modeGlyph
                 label: audio.compact ? "" : audio.modeLabel
-                tip: "播放顺序：" + audio.modeLabel + "，点按切换"
+                tip: audio.app.radioActive ? "正在收听" + audio.modeLabel + "，点按停止自动续播" : "播放顺序：" + audio.modeLabel + "，点按切换"
                 enabled: audio.app.connected
-                onClicked: audio.app.cycleMode()
+                onClicked: audio.app.radioActive ? audio.app.stopRadio() : audio.app.cycleMode()
             }
             Item { Layout.fillWidth: true; implicitHeight: 1 }
             PixelButton {

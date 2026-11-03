@@ -19,9 +19,10 @@ Item {
     property var contexts: ({})
     property var cacheOrder: []
     property var accountOwners: ({})
+    readonly property bool radioHere: tab === "guess" && app.radioActive && app.radio.provider === app.provider
     readonly property var tabs: app.provider === "netease" ? [
         { id: "charts", label: "排行榜" }, { id: "playlists", label: "推荐歌单" },
-        { id: "albums", label: "新碟" }, { id: "daily", label: "每日推荐" }
+        { id: "albums", label: "新碟" }, { id: "daily", label: "每日推荐" }, { id: "guess", label: "私人 FM" }
     ] : [
         { id: "charts", label: "排行榜" }, { id: "playlists", label: "推荐歌单" },
         { id: "new-songs", label: "新歌" }, { id: "albums", label: "新碟" },
@@ -35,7 +36,7 @@ Item {
             if (c[i] && c[i].id !== undefined && c[i].id !== null && String(c[i].id) !== "全部" && c[i].name !== "全部") out.push(c[i])
         return out
     }
-    readonly property string phase: !app.connected ? "offline"
+    readonly property string phase: radioHere ? "" : !app.connected ? "offline"
         : (locked ? "login"
         : (busy && list.count === 0 ? "busy"
         : (error !== "" ? (app.needsLogin(error) ? "login" : "error")
@@ -64,7 +65,8 @@ Item {
         primed = s ? s.primed : false; dirty = !s || s.dirty
         list.setItems(s ? s.items : [])
         if (s) Qt.callLater(function () { list.currentIndex = s.selected; list.contentY = s.y })
-        if (visible && dirty) load(false)
+        if (radioHere) syncRadio()
+        else if (visible && dirty) load(false)
     }
     onVisibleChanged: if (visible && dirty && app.connected) load(false)
     function select(t, c) {
@@ -73,6 +75,7 @@ Item {
         load(false)
     }
     function load(force) {
+        if (radioHere) { syncRadio(); return }
         if (!visible) { dirty = true; return }
         gen++
         var g = gen
@@ -104,6 +107,15 @@ Item {
             dv.remember(key)
         })
     }
+    function syncRadio() {
+        if (!radioHere) return
+        gen++; busy = false; error = ""; more = false; primed = true; dirty = false
+        list.setItems(app.queue.slice(Math.max(0, app.index)), true)
+    }
+    onRadioHereChanged: {
+        if (radioHere) syncRadio()
+        else if (tab === "guess" && visible) load(false)
+    }
     function next() {
         if (!more || busy) return
         var g = gen, key = cacheKey(), off = offset
@@ -121,6 +133,8 @@ Item {
     }
     Connections {
         target: dv.app
+        function onQueueChanged() { if (dv.radioHere) dv.syncRadio() }
+        function onIndexChanged() { if (dv.radioHere) dv.syncRadio() }
         function onPlatformReset() { dv.saveContext(); dv.gen++; dv.busy = false }
         function onPlatformReady() { dv.restoreContext() }
         function onAccountReloaded() {
@@ -186,15 +200,35 @@ Item {
         }
     }
 
+    RadioPanel {
+        id: receiver
+        objectName: "radioPanel"
+        anchors.top: head.bottom
+        anchors.topMargin: visible ? dv.ui.px * 3 : 0
+        anchors.left: parent.left; anchors.right: parent.right
+        anchors.leftMargin: dv.ui.pad; anchors.rightMargin: dv.ui.pad
+        height: visible ? implicitHeight : 0
+        visible: dv.tab === "guess"
+        app: dv.app; ui: dv.ui
+        onRefreshRequested: dv.load(true)
+    }
+
     ItemList {
         id: list
-        anchors.top: head.bottom
+        anchors.top: receiver.bottom
+        anchors.topMargin: receiver.visible ? dv.ui.px * 3 : 0
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         app: dv.app
         ui: dv.ui
         numbered: dv.tab !== "playlists" && dv.tab !== "albums"
+        playHandler: dv.tab === "guess" ? function (index, item) {
+            if (dv.radioHere) {
+                for (var at = Math.max(0, dv.app.index); at < dv.app.queue.length; at++)
+                    if (T.keyOf(dv.app.queue[at]) === T.keyOf(item)) { dv.app.playQueueAt(at); break }
+            } else dv.app.startRadio(item)
+        } : null
         more: dv.more
         busy: dv.busy && list.count > 0
         onLoadMore: dv.next()

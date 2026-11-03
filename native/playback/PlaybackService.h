@@ -1,5 +1,6 @@
 #pragma once
 #include "MusicPlayer.h"
+#include "RadioController.h"
 #include "InterfaceSession.h"
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -24,6 +25,7 @@ class PlaybackService : public QObject {
     Host m_host;
     MusicApi m_api;
     MusicPlayer m_player;
+    RadioController m_radio;
     QLocalServer m_server;
     QHash<QLocalSocket *, Client> m_clients;
     QPointer<QLocalSocket> m_gui;

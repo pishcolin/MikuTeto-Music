@@ -64,6 +64,13 @@ module.exports = function extendNetEase(api, parse) {
     return (b.sub || []).filter(x => x.name).map(x => ({id:x.name, name:x.name}));
   };
   api.discover = async (type, offset = 0, category = '全部') => {
+    if (type === 'guess') {
+      if (!api.host.authenticated()) throw new Error('请先登录网易云音乐，再收听私人 FM');
+      const b = await request('/personal_fm');
+      if (!Array.isArray(b.data)) throw new Error('私人 FM 返回的数据无法读取');
+      // A radio batch is not an offset-paginated daily playlist; the native service refills it.
+      return page(rows(b.data, 'song'));
+    }
     if (type === 'charts') return page(rows((await request('/toplist')).list, 'playlist'));
     if (type === 'playlists' || type === 'categories') {
       const b = await request('/top/playlist', {cat: category, limit: 30, offset});

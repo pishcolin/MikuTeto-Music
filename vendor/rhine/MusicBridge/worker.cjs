@@ -125,6 +125,7 @@ const routes = Object.freeze({
     '/song/url/v1': 'song_url_v1',
     '/personalized': 'personalized',
     '/recommend/songs': 'recommend_songs',
+    '/personal_fm': 'personal_fm',
     '/album/newest': 'album_newest',
     '/top/playlist': 'top_playlist',
     '/playlist/catlist': 'playlist_catlist',

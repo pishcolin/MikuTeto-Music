@@ -25,6 +25,12 @@ The dual-platform bridge is produced by `scripts/build-bridge.cjs` and
 `scripts/adapt-dual-worker.cjs`, including `native/favorites-sync.cjs` and
 `native/netease-features.cjs`.
 
+The continuous-radio update adds a service-owned `RadioController`, QML radio
+controls and a NetEase private-FM adapter. The vendored `MusicBridge/worker.cjs`
+route table and generated `netease-endpoints.cjs` include `personal_fm` for that
+adapter. These are local changes on top of the pinned inputs recorded above;
+the upstream licenses and copyright notices remain intact.
+
 Claude assisted with the QML visual design, abstract app icon and README.
 Codex assisted with integration, logic, validation and release preparation.
 These descriptions do not alter third-party ownership or license conditions.

@@ -203,6 +203,7 @@ class NativeBridge(QObject):
         "/login/channels",
     })
     CONTROLS = frozenset({
+        "player.radioStart", "player.radioStop", "player.radioRetry",
         "player.play", "player.enqueue", "player.toggle", "player.pause",
         "player.seek", "player.volume", "player.next", "player.remove",
         "player.stop", "player.quality", "player.mode", "player.move", "player.playIndex", "lyrics.offset",
@@ -743,6 +744,13 @@ class NativeBridge(QObject):
     def control(self, command, arguments):
         if command not in self.CONTROLS or not self.connected:
             return self._reject("播放控制尚未就绪或不支持此操作")
+        if command == 'player.radioStart':
+            source = arguments.get('provider')
+            if source not in ('qq', 'netease'):
+                return self._reject('请选择电台所属平台')
+            track = arguments.get('track')
+            if track and (not isinstance(track, dict) or track.get('provider') != source or track.get('kind') != 'song'):
+                return self._reject('请选择当前平台的推荐歌曲')
         if command in {"player.play", "player.enqueue"}:
             tracks = [arguments.get("track", {})] + arguments.get("source", [])
             if any(not isinstance(track, dict) or track.get("provider") not in ("qq", "netease") or track.get("kind") != "song" for track in tracks):
