@@ -1,0 +1,11 @@
+{
+  "name": "mikuteto-music-build",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build:bridge": "node scripts/build-bridge.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

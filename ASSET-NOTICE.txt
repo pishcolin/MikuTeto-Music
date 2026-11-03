@@ -1,0 +1,39 @@
+Miku Teto Music — public release asset notice
+
+The project code license (MIT) does not grant rights in third-party characters,
+fonts, trademarks, recordings, cover images or other third-party material.
+
+assets/characters/miku-pixel.png and teto-pixel.png are AI-assisted fan sprites.
+Their generation prompts are recorded in generation-prompts.json. The small
+user-supplied style reference is not distributed. No Kieed illustration, crop,
+mask, or original-art-specific cover projection is included in this release.
+
+Hatsune Miku / 初音ミク:
+© Crypton Future Media, INC. www.piapro.net
+Piapro Character License: https://piapro.jp/license/pcl
+Guidelines: https://piapro.jp/license/character_guideline
+
+Kasane Teto / 重音テト:
+© 線・小山乃舞世 / ツインドリル
+Guidelines and applicable license annex:
+https://kasaneteto.jp/guideline/character.html
+
+These character assets are excluded from the MIT grant. This is a free,
+unofficial, noncommercial fan distribution. No endorsement, commercial rights
+or character sublicense is granted by the project. Reusers must independently
+follow the applicable rights-holder guidelines; the software license alone is
+not permission to reuse the characters commercially.
+
+The abstract two-color music-note app icon was created with Claude assistance
+for this project and is included under the project's MIT terms to the extent
+of the contributor's rights. It does not reproduce the Kieed illustrations.
+
+MiSans is used in its original, unmodified official TTF files, under the
+separate MiSans license, not MIT. See licenses/MiSans-license.pdf and
+licenses/font-source.json. MiSans is credited to Xiaomi / 小米.
+Noto Sans Symbols 2: SIL Open Font License 1.1; see
+assets/fonts/NotoSansSymbols2-OFL.txt.
+
+Any music metadata or album art retrieved while using the application remains
+subject to its original rights. No account data, downloaded music or personal
+artwork is included in the distributed application or repository.

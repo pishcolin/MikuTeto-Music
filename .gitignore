@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+runtime/
+build/
+dist/
+node_modules/
+*.log
+*.sqlite3*
+*.ini
+.env*
+*.dpapi
+*.tmp
+native/worker-dual.cjs
+native/xhr-sync-worker.js
+.venv/
