@@ -28,6 +28,7 @@ module.exports = {
     'song_url_v1': require('./node_modules/@neteasecloudmusicapienhanced/api/module/song_url_v1.js'),
     'personalized': require('./node_modules/@neteasecloudmusicapienhanced/api/module/personalized.js'),
     'recommend_songs': require('./node_modules/@neteasecloudmusicapienhanced/api/module/recommend_songs.js'),
+    'personal_fm': require('./node_modules/@neteasecloudmusicapienhanced/api/module/personal_fm.js'),
     'album_newest': require('./node_modules/@neteasecloudmusicapienhanced/api/module/album_newest.js'),
     'top_playlist': require('./node_modules/@neteasecloudmusicapienhanced/api/module/top_playlist.js'),
     'playlist_catlist': require('./node_modules/@neteasecloudmusicapienhanced/api/module/playlist_catlist.js'),
