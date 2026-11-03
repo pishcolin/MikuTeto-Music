@@ -1,0 +1,78 @@
+#pragma once
+#include "LyricsController.h"
+#include <optional>
+
+class MusicPlayer : public QObject {
+    Q_OBJECT
+  public:
+    MusicPlayer(Host *host, MusicApi *api, QObject *parent = nullptr);
+    void enqueue(const QJsonObject &track, bool next = false);
+    void play(QJsonObject track, std::optional<QJsonArray> source = std::nullopt,
+              std::optional<int> queueIndex = std::nullopt, bool preview = false,
+              std::optional<QJsonObject> resume = std::nullopt);
+    QJsonObject sessionState() const;
+    void restoreSessionState(const QJsonObject &saved);
+    void tick(double time, bool force = false);
+    void toggle();
+    void setPaused(bool paused);
+    void seek(double fraction);
+    void volume(double value);
+    void next(int direction = 1, bool ended = false);
+    void remove(int index);
+    void move(int from, int to, const QString &expectedKey = {});
+    void playIndex(int selected, const QString &expectedKey = {});
+    void clearUpcoming();
+    void stop();
+    void setQuality(const QString &value, const QString &provider = {});
+    void accountLoggedOut(const QString &provider);
+    void setMode(const QString &value);
+    void setAlternative(bool enabled);
+    void clearHistory();
+    QJsonObject playbackSnapshot() const;
+    void applyPlaybackSnapshot();
+    static QVector<QPair<QString, QString>> qualityOptions(const QString &provider);
+    static QString localQuality(const QJsonObject &track);
+    static QString sourceQuality(const QString &provider, const QJsonObject &audio, bool trial = false);
+    QString actualQuality;
+    QJsonObject localCovers;
+    static QString identity(const QJsonObject &track);
+    LyricsController lyrics;
+    QJsonArray queue;
+    QJsonArray history;
+    QJsonObject current;
+    QJsonObject state;
+    int index = -1;
+    bool loading = false;
+    bool failed = false;
+    bool trial = false;
+    QString coverImage;
+    QString mode = "all";
+    QString status;
+    QString quality;
+    bool alternative = false;
+    bool previewRequested = false;
+    std::function<void()> onEnd;
+
+  signals:
+    void changed();
+    void trackSelected(QJsonObject track);
+
+  private:
+    Host *m_host;
+    MusicApi *m_api;
+    quint64 m_generation = 0;
+    qint64 m_endSerial = 0;
+    double m_lastPoll = -1;
+    std::optional<double> m_resumePosition;
+    bool m_resumePaused = false;
+    bool m_restoringSession = false;
+    int m_recoveryAttempts = 0;
+    int m_selectionSerial = 0;
+    bool m_receivedSnapshot = false;
+    QString m_remoteCover;
+    bool remoteCommand(const QString &method, QJsonObject arguments = {});
+    void recoverPlayback();
+    MusicApi::Valid valid(quint64 generation);
+    void prepare(QJsonObject track, quint64 generation, bool reload = false);
+    void fail(QString error);
+};

@@ -1,0 +1,870 @@
+#include "MusicPlayer.h"
+#include <QFileInfo>
+#include <QUrl>
+#include <QJsonDocument>
+#include <QPointer>
+#include <QRandomGenerator>
+#include <QRegularExpression>
+#include <algorithm>
+#include <cmath>
+
+static bool onlineSong(const QJsonObject &track) {
+    return track["kind"] == "song" && !track["id"].toString().isEmpty() &&
+           QStringList{"qq", "netease"}.contains(track["provider"].toString());
+}
+
+QString MusicPlayer::identity(const QJsonObject &track) {
+    return track["provider"].toString("netease") + ":" + track["id"].toString();
+}
+
+/** 本地音质近似分级 */
+QString MusicPlayer::localQuality(const QJsonObject &track) {
+    const auto name = QFileInfo(track["path"].toString()).completeBaseName().toLower();
+    const auto format = track["format"].toString().toLower();
+    const auto bitrateKbps = track["bitrate"].toInt();
+    if (name.contains("jymaster") || name.contains("母带") || name.contains("[master]") ||
+        name.contains("master quality")) {
+        return "jymaster";
+    }
+    if (name.contains("全景声") || name.contains("沉浸") || name.contains("dolby atmos") ||
+        name.contains("[atmos]") || name.contains("[sky]")) {
+        return "sky";
+    }
+    if (name.contains("jyeffect") || name.contains("臻音")) {
+        return "jyeffect";
+    }
+    const bool lossless =
+        QStringList{"flac", "ape", "wav", "aif", "aiff", "alac", "wv", "dsf", "dff"}.contains(format) ||
+        (format == "m4a" && bitrateKbps >= 700);
+    if (lossless) {
+        const bool highResolution = name.contains("hi-res") || name.contains("hires") ||
+                                    name.contains("高解析") || name.contains("24bit") ||
+                                    name.contains("24-bit") || track["sampleRate"].toInt() > 48000 ||
+                                    bitrateKbps > 1600;
+        return highResolution ? "hires" : "sq";
+    }
+    return bitrateKbps >= 192 || name.contains("320k") || name.contains("[hq]") ? "hq" : "standard";
+}
+
+/** 只识别本次可播放地址及其响应元数据；不读取偏好或歌曲可用音质列表。 */
+QString MusicPlayer::sourceQuality(const QString &provider, const QJsonObject &audio, bool trial) {
+    if (trial || audio["url"].toString().isEmpty()) {
+        return {};
+    }
+    const auto url = QUrl(audio["url"].toString());
+    const auto file = url.fileName().toUpper();
+    auto format = audio["type"].toString().toLower();
+    if (format.isEmpty()) {
+        format = audio["extName"].toString().toLower();
+    }
+    if (format.isEmpty()) {
+        format = QFileInfo(url.path()).suffix().toLower();
+    }
+    if (provider == "qq") {
+        // 登录接口可能没有 quality；前缀是实际获准播放的媒体文件类型。
+        if (file.startsWith("F000") || file.startsWith("A000")) {
+            return "sq";
+        }
+        if (file.startsWith("M800")) {
+            return "hq";
+        }
+        if (file.startsWith("M500") || file.startsWith("C400")) {
+            return "standard";
+        }
+        return {};
+    }
+    const auto bitrate = audio["br"].toDouble();
+    const bool lossy = format == "mp3" || format == "m4a" || format == "aac";
+    if (lossy && bitrate > 0) {
+        // 替代音源可能保留原等级；已返回的有损格式与码率优先于等级标签。
+        return bitrate >= 192000 ? "hq" : "standard";
+    }
+    if (provider == "netease") {
+        const auto level = audio["level"].toString();
+        const QHash<QString, QString> levels{
+            {"standard", "standard"}, {"higher", "hq"},         {"exhigh", "hq"}, {"lossless", "sq"},
+            {"hires", "hires"},       {"jyeffect", "jyeffect"}, {"sky", "sky"},   {"jymaster", "jymaster"}};
+        if (levels.contains(level)) {
+            const auto resolved = levels.value(level);
+            if (!lossy || resolved == "standard" || resolved == "hq") {
+                return resolved;
+            }
+        }
+    }
+    const bool lossless = format == "flac" || format == "ape" || format == "alac";
+    if (lossless) {
+        // 无损码率高不能证明 Hi-Res；必须同时取得采样率与位深。
+        if (audio["sampleRate"].toDouble() > 48000 && audio["bitDepth"].toInt() > 16) {
+            return "hires";
+        }
+        return "sq";
+    }
+    return {};
+}
+
+QVector<QPair<QString, QString>> MusicPlayer::qualityOptions(const QString &provider) {
+    if (provider == "qq") {
+        return {{"best", "自动最高可用"},
+                {"standard", "标准"},
+                {"exhigh", "HQ 高品质"},
+                {"lossless", "SQ 无损 / FLAC"},
+                {"ape", "SQ 无损 / APE"}};
+    }
+    if (provider == "kugou") {
+        return {{"standard", "标准"},
+                {"exhigh", "HQ 高品音质"},
+                {"lossless", "SQ 无损音质"},
+                {"hires", "Hi-Res 高解析音质"}};
+    }
+    return {
+        {"standard", "标准"},           {"higher", "较高"},      {"exhigh", "极高"}, {"lossless", "SQ 无损"},
+        {"hires", "Hi-Res 高解析音质"}, {"jymaster", "超清母带"}};
+}
+
+/** 共享音质偏好；换源保留队列、歌词、播放位置和暂停意图，迟到响应由播放代数隔离。 */
+void MusicPlayer::setQuality(const QString &value, const QString &provider) {
+    if (remoteCommand("quality", {{"value", value}})) {
+        return;
+    }
+    const auto selectedProvider = provider.isEmpty() ? m_api->provider : provider;
+    const auto options = qualityOptions(selectedProvider);
+    const auto found = std::find_if(options.begin(), options.end(),
+                                    [&value](const auto &option) { return option.first == value; });
+    if (found == options.end()) {
+        return;
+    }
+    m_host->setPreference("quality-" + selectedProvider, value);
+    if (selectedProvider != m_api->provider || quality == value) { emit changed(); return; }
+    quality = value;
+    m_recoveryAttempts = 0;
+    m_host->setPreference("quality", value);
+    if (current.isEmpty() || (loading && !m_resumePosition)) {
+        emit changed();
+        return;
+    }
+    if (!m_resumePosition) {
+        m_resumePosition = state["position"].toDouble();
+        m_resumePaused = !state["playing"].toBool();
+    }
+    const auto generation = ++m_generation;
+    m_host->mediaControl("stop");
+    actualQuality.clear();
+    failed = false;
+    trial = false;
+    loading = true;
+    status = QStringLiteral("正在切换音质…");
+    emit changed();
+    prepare(current, generation, true);
+}
+
+MusicPlayer::MusicPlayer(Host *host, MusicApi *api, QObject *parent)
+    : QObject(parent), lyrics(host), m_host(host), m_api(api) {
+    state = {{"playing", false}, {"position", 0}, {"duration", 0}, {"volume", 0.7}, {"seekable", false}};
+    if (auto connection = m_host->playbackConnection()) {
+        connect(connection, &PlaybackConnection::snapshotChanged, this, &MusicPlayer::applyPlaybackSnapshot,
+                Qt::QueuedConnection);
+        connect(connection, &PlaybackConnection::disconnected, this, [this] {
+            loading = false;
+            failed = true;
+            state["playing"] = false;
+            status = QStringLiteral("后台播放服务已断开，请重新打开应用");
+            emit changed();
+        });
+        applyPlaybackSnapshot();
+        // 等资料库完成来源初始化后再解码封面，避免初始化的账号代数作废首次加载。
+        QTimer::singleShot(0, this, [this] {
+            m_remoteCover.clear();
+            applyPlaybackSnapshot();
+        });
+        return;
+    }
+    quality = host->preference("quality");
+    if (!QStringList{"standard", "higher", "exhigh", "lossless", "hires", "jymaster", "best", "ape"}.contains(
+            quality)) {
+        quality = "exhigh";
+    }
+    localCovers = QJsonDocument::fromJson(host->preference("local-cover-cache").toUtf8()).object();
+    alternative = host->preference("alternate-source") == "on";
+    const auto saved = QJsonDocument::fromJson(host->preference("play-history").toUtf8()).array();
+    const QRegularExpression identifier(QStringLiteral("^[a-zA-Z0-9_-]{1,80}$"));
+    for (const auto &value : saved) {
+        const auto track = value.toObject();
+        if (track["kind"] == "song" && identifier.match(track["id"].toString()).hasMatch()) {
+            history.append(track);
+            if (history.size() == 200) {
+                break;
+            }
+        }
+    }
+    connect(&lyrics, &LyricsController::changed, this, &MusicPlayer::changed);
+    connect(&lyrics, &LyricsController::coverMatched, this, [this](QString key, QString url) {
+        if (current["provider"] != "local" || LyricsController::trackKey(current) != key ||
+            !current["cover"].toString().isEmpty()) {
+            return;
+        }
+        const auto alive = valid(m_generation);
+        m_host->loadCover(url, [this, alive, url](QString image) {
+            if (alive() && !image.isEmpty()) {
+                coverImage = image;
+                current["cover"] = url;
+                const auto key = current["id"].toString() + ':' + current["fingerprint"].toString();
+                localCovers[key] = url;
+                while (localCovers.size() > 200) {
+                    localCovers.remove(localCovers.begin().key());
+                }
+                m_host->setPreference(
+                    "local-cover-cache",
+                    QString::fromUtf8(QJsonDocument(localCovers).toJson(QJsonDocument::Compact)));
+                if (index >= 0 && index < queue.size()) {
+                    queue.replace(index, current);
+                }
+                emit changed();
+            }
+        });
+    });
+}
+
+MusicApi::Valid MusicPlayer::valid(quint64 generation) {
+    return [owner = QPointer(this), generation] { return owner && owner->m_generation == generation; };
+}
+
+void MusicPlayer::enqueue(const QJsonObject &track, bool next) {
+    if (remoteCommand("enqueue", {{"track", track}, {"next", next}})) {
+        return;
+    }
+    if (!onlineSong(track)) {
+        return;
+    }
+    for (qsizetype i = 0; i < queue.size(); ++i) {
+        if (i != index && identity(queue.at(i).toObject()) == identity(track)) {
+            queue.removeAt(i);
+            if (i < index) {
+                --index;
+            }
+            break;
+        }
+    }
+    queue.insert(next ? std::max(0, index + 1) : queue.size(), track);
+    emit changed();
+}
+
+/** 停止旧音源并推进代数，先完成元数据再交付播放；迟到的地址不能恢复旧曲目。 */
+void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std::optional<int> queueIndex,
+                       bool preview, std::optional<QJsonObject> resume) {
+    QJsonObject arguments{{"track", track}, {"preview", preview}};
+    if (source) {
+        arguments["source"] = *source;
+    }
+    if (queueIndex) {
+        arguments["index"] = *queueIndex;
+    }
+    if (resume) {
+        arguments["resume"] = *resume;
+    }
+    if (remoteCommand("play", arguments)) {
+        return;
+    }
+    if (!onlineSong(track)) {
+        return;
+    }
+    if (source) {
+        QSet<QString> seen;
+        queue = {};
+        for (const auto &value : *source) {
+            const auto song = value.toObject();
+            const auto key = identity(song);
+            if (onlineSong(song) && !seen.contains(key)) {
+                seen.insert(key);
+                queue.append(song);
+            }
+        }
+    }
+    int selected = -1;
+    for (qsizetype i = 0; i < queue.size(); ++i) {
+        if (identity(queue.at(i).toObject()) == identity(track)) {
+            selected = int(i);
+            break;
+        }
+    }
+    if (selected < 0) {
+        selected = int(queue.size());
+        queue.append(track);
+    }
+    // The source may have duplicate entries; always use the normalized identity.
+    index = selected;
+    m_api->provider = track["provider"].toString();
+    m_host->setPlaybackProvider(m_api->provider);
+    auto savedQuality = m_host->preference("quality-" + m_api->provider);
+    if (savedQuality.isEmpty()) savedQuality = m_host->preference("quality");
+    const auto supported = qualityOptions(m_api->provider);
+    quality = std::any_of(supported.begin(), supported.end(), [&savedQuality](const auto &v) {
+        return v.first == savedQuality;
+    }) ? savedQuality : "standard";
+    const auto generation = ++m_generation;
+    m_resumePosition = resume ? std::optional<double>(resume->value("position").toDouble()) : std::nullopt;
+    m_resumePaused = resume && !resume->value("requested").toBool();
+    m_restoringSession = resume.has_value();
+    m_recoveryAttempts = 0;
+    previewRequested = preview && m_api->provider == "qq";
+    m_host->mediaControl("stop");
+    current = track;
+    actualQuality.clear();
+    lyrics.clear();
+    coverImage.clear();
+    loading = true;
+    failed = false;
+    trial = false;
+    status = QStringLiteral("正在准备：") + track["title"].toString();
+    emit changed();
+    if (!track["deferred"].toBool()) {
+        prepare(track, generation);
+        return;
+    }
+    m_api->call(
+        "songs", {QJsonValue(QJsonArray{track["id"]})},
+        [this, generation](MusicReply result) {
+            const auto songs = result.value.toArray();
+            if (!result.ok() || songs.isEmpty()) {
+                fail(result.ok() ? QStringLiteral("此曲目暂不可读取") : result.error);
+                return;
+            }
+            current = songs.first().toObject();
+            if (index >= 0 && index < queue.size()) {
+                queue.replace(index, current);
+            }
+            emit changed();
+            prepare(current, generation);
+        },
+        valid(generation));
+}
+
+void MusicPlayer::prepare(QJsonObject track, quint64 generation, bool reload) {
+    if (track["provider"] == "local") {
+        const QUrl source(track["url"].toString());
+        if (m_api->provider != "local" || !source.isLocalFile() ||
+            !QFileInfo(source.toLocalFile()).isReadable()) {
+            fail(QStringLiteral("本地文件无法访问，请检查文件位置或重新扫描"));
+            return;
+        }
+    }
+    if (track["provider"] == "local" && track["cover"].toString().isEmpty()) {
+        const auto key = track["id"].toString() + ':' + track["fingerprint"].toString();
+        if (localCovers.contains(key)) {
+            track["cover"] = localCovers[key];
+            current = track;
+        }
+    }
+    if (!reload) {
+        if (!track["cover"].toString().isEmpty()) {
+            m_host->loadCover(track["cover"].toString(), [this, alive = valid(generation)](QString key) {
+                if (!alive()) {
+                    return;
+                }
+                coverImage = key;
+                if (key.isEmpty() && current["provider"] == "local") {
+                    current["cover"] = "";
+                    const auto cacheKey = current["id"].toString() + ':' + current["fingerprint"].toString();
+                    localCovers.remove(cacheKey);
+                    m_host->setPreference(
+                        "local-cover-cache",
+                        QString::fromUtf8(QJsonDocument(localCovers).toJson(QJsonDocument::Compact)));
+                    // 下一轮再补图，确保同步失败回调不会早于本次歌词初始化。
+                    m_host->schedule(0, [this, alive] {
+                        if (alive()) {
+                            lyrics.matchCover(current);
+                        }
+                    });
+                }
+                emit changed();
+            });
+        }
+        if (!m_restoringSession) {
+            emit trackSelected(current);
+        }
+        lyrics.load(current);
+    }
+    if (track["provider"] == "local") {
+        const auto url = QUrl(track["url"].toString());
+        if (m_api->provider != "local" || !url.isLocalFile() || !QFileInfo(url.toLocalFile()).isReadable()) {
+            fail(QStringLiteral("本地文件无法访问，请检查文件位置或重新扫描"));
+            return;
+        }
+        m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
+                              track["album"].toString());
+        if (!m_host->mediaLoad(url.toString(), false, m_resumePosition.value_or(0),
+                               m_resumePosition && m_resumePaused)) {
+            fail(QStringLiteral("本地音频无法加载"));
+            return;
+        }
+        m_resumePosition.reset();
+        m_endSerial = m_host->mediaState().value("ended").toLongLong();
+        actualQuality = localQuality(track);
+        status = QStringLiteral("正在播放本地文件：") + track["format"].toString();
+        loading = false;
+        emit changed();
+        return;
+    }
+    // QQ 专有音质在其他平台转换为通用无损
+    const auto qqQuality = quality == "best" || quality == "ape";
+    auto effectiveQuality = qqQuality && m_api->provider != "qq" ? "lossless" : quality;
+
+    // 网易云专有音质在其他平台转换为对应档位
+    if (m_api->provider != "netease") {
+        if (quality == "jymaster" || quality == "jyeffect" || quality == "sky") {
+            effectiveQuality = "lossless";
+        } else if (quality == "higher") {
+            effectiveQuality = "standard";
+        }
+    }
+
+    // 酷狗不支持 ape，转换为通用无损
+    if (m_api->provider == "kugou" && quality == "ape") {
+        effectiveQuality = "lossless";
+    }
+
+    m_api->call(
+        previewRequested ? "preview" : "playback", {track, effectiveQuality, alternative},
+        [this, track](MusicReply result) {
+            if (!result.ok()) {
+                fail(result.error);
+                return;
+            }
+            const auto audio = result.value.toObject();
+            const auto url = audio["url"].toString();
+            if (url.isEmpty()) {
+                fail(QStringLiteral("此歌曲暂无可用音源，请检查登录和歌曲权限"));
+                return;
+            }
+            m_host->mediaMetadata(track["title"].toString(), track["artist"].toString(),
+                                  track["album"].toString());
+            if (!m_host->mediaLoad(url, m_api->provider == "netease" && alternative,
+                                   m_resumePosition.value_or(0), m_resumePosition && m_resumePaused)) {
+                fail(QStringLiteral("音频地址不可用"));
+                return;
+            }
+            m_resumePosition.reset();
+            m_endSerial = m_host->mediaState().value("ended").toLongLong();
+            auto entry = track;
+            entry["wiki"] = "";
+            entry["description"] = "";
+            QJsonArray recent{entry};
+            for (const auto &value : history) {
+                if (identity(value.toObject()) != identity(track) && recent.size() < 200) {
+                    recent.append(value);
+                }
+            }
+            history = recent;
+            m_host->setPreference("play-history",
+                                  QString::fromUtf8(QJsonDocument(history).toJson(QJsonDocument::Compact)));
+            const auto preview = audio["freeTrialInfo"];
+            trial = audio["preview"].toBool() || preview.isObject() || preview.isArray() ||
+                    (preview.isString() && !preview.toString().isEmpty() && preview.toString() != "null") ||
+                    (preview.isBool() && preview.toBool()) || (preview.isDouble() && preview.toDouble() != 0);
+            actualQuality = sourceQuality(m_api->provider, audio, trial);
+            status = trial ? QStringLiteral("当前音源为试听片段")
+                           : QStringLiteral("正在播放：") + track["title"].toString();
+            const QHash<QString, QString> qualities{{"128", "标准"}, {"320", "高品质"}, {"flac", "无损"}};
+            if (!trial && qualities.contains(audio["quality"].toString())) {
+                status += QStringLiteral("（") + qualities.value(audio["quality"].toString()) +
+                          QStringLiteral("）");
+            }
+            if (!audio["qualityFallback"].toString().isEmpty()) {
+                status += QStringLiteral("（已切换为") + audio["qualityFallback"].toString() +
+                          QStringLiteral("音质）");
+            }
+            loading = false;
+            emit changed();
+        },
+        valid(generation));
+}
+
+void MusicPlayer::fail(QString error) {
+    if (!m_restoringSession) {
+        m_resumePosition.reset();
+    }
+    failed = true;
+    actualQuality.clear();
+    status = error;
+    loading = false;
+    emit changed();
+}
+
+/** 重新获取当前歌曲的地址并恢复位置 */
+void MusicPlayer::recoverPlayback() {
+    ++m_recoveryAttempts;
+    const auto generation = ++m_generation;
+    m_resumePosition = state["position"].toDouble();
+    m_resumePaused = !state["requested"].toBool();
+    loading = true;
+    failed = false;
+    actualQuality.clear();
+    status = QStringLiteral("正在恢复播放（%1/2）…").arg(m_recoveryAttempts);
+    m_host->mediaControl("stop");
+    emit changed();
+    prepare(current, generation, true);
+}
+
+void MusicPlayer::tick(double time, bool force) {
+    if (m_host->playbackConnection()) {
+        return;
+    }
+    if (!force && time - m_lastPoll < 0.1) {
+        return;
+    }
+    m_lastPoll = time;
+    const auto previous = state;
+    const auto update = QJsonObject::fromVariantMap(m_host->mediaState());
+    for (auto it = update.begin(); it != update.end(); ++it) {
+        state[it.key()] = it.value();
+    }
+    if (m_resumePosition && !loading && state["seekable"].toBool()) {
+        const auto position = std::clamp(*m_resumePosition, 0., state["duration"].toDouble());
+        m_resumePosition.reset();
+        m_host->mediaControl("seek", position);
+        if (m_resumePaused) {
+            m_host->mediaControl("pause");
+        }
+    }
+    lyrics.sync(state["position"].toDouble());
+    // 播放结束或错误状态只在播放中或加载完成后触发
+    if (!current.isEmpty() && !loading && state.contains("ended") &&
+        state["ended"].toInteger() != m_endSerial) {
+        m_endSerial = state["ended"].toInteger();
+        if (onEnd) {
+            onEnd();
+        } else {
+            next(1, true);
+        }
+        return;
+    }
+    const auto playbackError = state["error"].toString();
+    if (!loading && !current.isEmpty() && !playbackError.isEmpty() &&
+        (!failed || !actualQuality.isEmpty() || status != playbackError)) {
+        constexpr int maxRecoveryAttempts = 2;
+        if (!failed && state["recoverable"].toBool() && m_recoveryAttempts < maxRecoveryAttempts &&
+            current["provider"] != "local") {
+            recoverPlayback();
+            return;
+        }
+        fail(playbackError);
+    } else if (state != previous) {
+        emit changed();
+    }
+}
+
+void MusicPlayer::toggle() {
+    if (remoteCommand("toggle", {})) {
+        return;
+    }
+    if (failed && !current.isEmpty()) {
+        const auto resume = m_resumePosition ? std::optional<QJsonObject>(sessionState()) : std::nullopt;
+        play(current, std::nullopt, index, previewRequested, resume);
+        return;
+    }
+    if (m_resumePosition) {
+        setPaused(!m_resumePaused);
+        return;
+    }
+    if (!loading && !current.isEmpty()) {
+        setPaused(state["playing"].toBool());
+    }
+}
+
+void MusicPlayer::setPaused(bool paused) {
+    if (remoteCommand("pause", {{"paused", paused}})) {
+        return;
+    }
+    if (m_resumePosition) {
+        m_resumePaused = paused;
+    }
+    m_host->mediaControl(paused ? "pause" : "resume");
+}
+
+void MusicPlayer::seek(double fraction) {
+    if (remoteCommand("seek", {{"value", fraction}})) {
+        return;
+    }
+    if (m_resumePosition) {
+        m_resumePosition = std::clamp(fraction, 0., 1.) * state["duration"].toDouble();
+        return;
+    }
+    if (state["seekable"].toBool()) {
+        m_host->mediaControl("seek", std::clamp(fraction, 0., 1.) * state["duration"].toDouble());
+    }
+}
+
+void MusicPlayer::volume(double value) {
+    if (remoteCommand("volume", {{"value", value}})) {
+        return;
+    }
+    if (!PlatformFeatures::ApplicationVolume) {
+        value = 1.0;
+    }
+    const auto volume = std::clamp(value, 0., 1.);
+    m_host->mediaControl("volume", volume);
+    m_host->setPreference("volume", QString::number(volume));
+}
+
+void MusicPlayer::next(int direction, bool ended) {
+    if (remoteCommand("next", {{"direction", direction}, {"ended", ended}})) {
+        return;
+    }
+    if (queue.isEmpty()) {
+        return;
+    }
+    if (ended && mode == "one") {
+        play(current, std::nullopt, index);
+        return;
+    }
+    auto selected = index + direction;
+    if (mode == "shuffle" && queue.size() > 1) {
+        selected = (index + 1 + QRandomGenerator::global()->bounded(int(queue.size() - 1))) % queue.size();
+    }
+    if (selected >= queue.size() && mode == "off") {
+        status = QStringLiteral("队列已播放完");
+        emit changed();
+        return;
+    }
+    selected = ((selected % queue.size()) + queue.size()) % queue.size();
+    play(queue.at(selected).toObject(), std::nullopt, selected);
+}
+
+void MusicPlayer::playIndex(int selected, const QString &expectedKey) {
+    if (remoteCommand("playIndex", {{"index", selected}, {"key", expectedKey}})) return;
+    if (selected < 0 || selected >= queue.size()) return;
+    const auto track = queue.at(selected).toObject();
+    const auto uiKey = track["provider"].toString() + ":song:" + track["id"].toString();
+    if (!expectedKey.isEmpty() && identity(track) != expectedKey && uiKey != expectedKey) return;
+    play(track, std::nullopt, selected);
+}
+
+void MusicPlayer::move(int from, int to, const QString &expectedKey) {
+    if (remoteCommand("move", {{"from", from}, {"to", to}, {"key", expectedKey}})) return;
+    if (from < 0 || from >= queue.size() || to < 0 || to >= queue.size() || from == to) return;
+    const auto track = queue.at(from);
+    const auto song = track.toObject();
+    const auto uiKey = song["provider"].toString() + ":song:" + song["id"].toString();
+    if (!expectedKey.isEmpty() && identity(song) != expectedKey && uiKey != expectedKey) return;
+    queue.removeAt(from);
+    queue.insert(to, track);
+    if (index == from) index = to;
+    else if (from < index && to >= index) --index;
+    else if (from > index && to <= index) ++index;
+    // Reordering is a queue-only edit: keep stream, position, pending metadata,
+    // playback generation and requested/paused state unchanged.
+    emit changed();
+}
+
+void MusicPlayer::remove(int selected) {
+    if (remoteCommand("remove", {{"index", selected}})) {
+        return;
+    }
+    if (selected < 0 || selected >= queue.size() || selected == index) {
+        return;
+    }
+    queue.removeAt(selected);
+    if (selected < index) {
+        --index;
+    }
+    emit changed();
+}
+
+void MusicPlayer::clearUpcoming() {
+    if (remoteCommand("clear", {})) {
+        return;
+    }
+    queue = current.isEmpty() ? QJsonArray{} : QJsonArray{current};
+    index = current.isEmpty() ? -1 : 0;
+    emit changed();
+}
+
+/** 停止播放并作废音源与歌词请求；保留音量和历史等可恢复偏好。 */
+void MusicPlayer::stop() {
+    if (remoteCommand("stop", {})) {
+        return;
+    }
+    ++m_generation;
+    m_resumePosition.reset();
+    m_recoveryAttempts = 0;
+    lyrics.clear();
+    loading = false;
+    failed = false;
+    status.clear();
+    actualQuality.clear();
+    coverImage.clear();
+    current = {};
+    queue = {};
+    index = -1;
+    m_host->mediaControl("stop");
+    m_host->mediaMetadata({}, {}, {});
+    state["playing"] = false;
+    state["position"] = 0;
+    state["duration"] = 0;
+    emit changed();
+}
+
+/** GUI 播放操作统一交给服务；服务不可用时明确报错，不能回退到第二个本地播放器。 */
+bool MusicPlayer::remoteCommand(const QString &method, QJsonObject arguments) {
+    auto connection = m_host->playbackConnection();
+    if (!connection) {
+        return false;
+    }
+    connection->call("player." + method, arguments);
+    applyPlaybackSnapshot();
+    if (!connection->error().isEmpty()) {
+        failed = true;
+        status = connection->error();
+        emit changed();
+    }
+    return true;
+}
+
+void MusicPlayer::setMode(const QString &value) {
+    if (remoteCommand("mode", {{"value", value}})) {
+        return;
+    }
+    if (QStringList{"off", "all", "one", "shuffle"}.contains(value)) {
+        mode = value;
+        emit changed();
+    }
+}
+
+void MusicPlayer::setAlternative(bool enabled) {
+    if (remoteCommand("alternative", {{"enabled", enabled}})) {
+        return;
+    }
+    alternative = enabled;
+    m_host->setPreference("alternate-source", enabled ? "on" : "off");
+    emit changed();
+}
+
+void MusicPlayer::clearHistory() {
+    if (remoteCommand("clearHistory")) {
+        return;
+    }
+    history = {};
+    m_host->setPreference("play-history", "[]");
+    emit changed();
+}
+
+QJsonObject MusicPlayer::playbackSnapshot() const {
+    return {{"current", current},
+            {"queue", queue},
+            {"history", history},
+            {"index", index},
+            {"mode", mode},
+            {"state", state},
+            {"loading", loading},
+            {"failed", failed},
+            {"trial", trial},
+            {"preview", previewRequested},
+            {"status", status},
+            {"quality", quality},
+            {"actualQuality", actualQuality},
+            {"alternative", alternative},
+            {"lyrics", lyrics.playbackSnapshot()}};
+}
+
+/** 从服务同步显示副本；封面像素只在 GUI 中加载，旧曲目的异步封面不能覆盖新曲目。 */
+void MusicPlayer::applyPlaybackSnapshot() {
+    auto connection = m_host->playbackConnection();
+    if (!connection) {
+        return;
+    }
+    const auto snapshot = connection->snapshot();
+    current = snapshot["current"].toObject();
+    queue = snapshot["queue"].toArray();
+    history = snapshot["history"].toArray();
+    index = snapshot["index"].toInt(-1);
+    mode = snapshot["mode"].toString("all");
+    state = snapshot["state"].toObject();
+    loading = snapshot["loading"].toBool();
+    failed = snapshot["failed"].toBool();
+    trial = snapshot["trial"].toBool();
+    previewRequested = snapshot["preview"].toBool();
+    status = snapshot["status"].toString();
+    quality = snapshot["quality"].toString();
+    actualQuality = snapshot["actualQuality"].toString();
+    alternative = snapshot["alternative"].toBool();
+    lyrics.applyPlaybackSnapshot(snapshot["lyrics"].toObject());
+    const auto cover = current["cover"].toString();
+    if (m_remoteCover != cover) {
+        m_remoteCover = cover;
+        coverImage.clear();
+        if (!cover.isEmpty()) {
+            m_host->loadCover(cover, [this, owner = QPointer(this), cover](QString key) {
+                if (owner && m_remoteCover == cover) {
+                    coverImage = key;
+                    emit changed();
+                }
+            });
+        }
+    }
+    const auto serial = snapshot["selectionSerial"].toInt();
+    const bool selected = m_receivedSnapshot && serial != m_selectionSerial;
+    m_receivedSnapshot = true;
+    m_selectionSerial = serial;
+    emit changed();
+    if (selected) {
+        emit trackSelected(snapshot["selectedTrack"].toObject());
+    }
+}
+
+/** 会话存档属于播放核心；后台服务不链接 MusicSession.cpp，入口必须留在本文件。 */
+QJsonObject MusicPlayer::sessionState() const {
+    const auto live = m_host->mediaState();
+    const auto position =
+        m_resumePosition.value_or(live.value("position", state["position"].toVariant()).toDouble());
+    const bool requested = m_resumePosition
+                               ? !m_resumePaused
+                               : loading || live.value("requested", state["playing"].toVariant()).toBool();
+    return {{"current", current},
+            {"queue", queue},
+            {"index", index},
+            {"mode", mode},
+            {"position", position},
+            {"requested", requested},
+            {"preview", previewRequested}};
+}
+
+void MusicPlayer::restoreSessionState(const QJsonObject &saved) {
+    const auto position = saved["position"].toDouble(-1);
+    if (!std::isfinite(position) || position < 0 || position > 1e12) {
+        return;
+    }
+    const auto savedMode = saved["mode"].toString();
+    mode = QStringList{"all", "one", "off", "shuffle"}.contains(savedMode) ? savedMode : "all";
+    const auto track = saved["current"].toObject();
+    auto source = saved["queue"].toArray();
+    if (track.isEmpty()) {
+        queue = source;
+        index = -1;
+        emit changed();
+        return;
+    }
+    if (!onlineSong(track)) {
+        return;
+    }
+    // 用歌曲身份重建索引，损坏的旧索引不能使下一首跳到无关位置。
+    play(track, source, std::nullopt, saved["preview"].toBool(), saved);
+}
+
+void MusicPlayer::accountLoggedOut(const QString &provider) {
+    if (current["provider"].toString() != provider) {
+        // Logout invalidates pending account requests globally. Restart only an
+        // unfinished load for the other provider; already-playing audio stays.
+        if (loading && !current.isEmpty()) {
+            play(current, std::nullopt, std::nullopt, false,
+                 QJsonObject{{"position", state["position"].toDouble()},
+                             {"requested", !m_resumePaused}});
+        }
+        return;
+    }
+    ++m_generation;
+    m_host->mediaControl("stop");
+    loading = false;
+    failed = true;
+    actualQuality.clear();
+    status = QStringLiteral("此歌曲的账号已退出，请登录后重试或播放队列中的下一首");
+    emit changed();
+}
