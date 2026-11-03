@@ -37,7 +37,7 @@ native service uses its own compatible Qt DLLs under `runtime`.
 
 ## Corresponding source and replacing LGPL components
 
-The release's `MikuTeto-Music-1.0.0-ThirdPartySources.zip` contains the exact
+The release's `MikuTeto-Music-1.1.0-ThirdPartySources.zip` contains the exact
 downloaded Qt 6.12.0 module sources, PySide/Shiboken 6.12.0 sources, FFmpeg
 9.0.1 and zlib 1.3.1 sources, plus installed Node dependency source files and
 the bridge build inputs. Archive URLs/hashes and actual runtime versions are
