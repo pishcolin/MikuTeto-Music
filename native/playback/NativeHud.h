@@ -1,0 +1,243 @@
+#pragma once
+#include "Glyphs.h"
+#include "MusicLibrary.h"
+#include "UiMotion.h"
+#include <QCache>
+#include <QPointF>
+#include <QRectF>
+#include <map>
+#include <optional>
+
+// 场景边界只传递值和原生回调；界面控制器不持有脚本对象。
+struct HudSceneActions {
+    std::function<void(QString)> mode;
+    std::function<void(bool)> theme;
+    std::function<void(bool)> reduced;
+    std::function<void(QString, double, double, double)> pointer;
+    std::function<void(QString)> viewer;
+    std::function<void(QString)> viewerKey;
+    std::function<void()> openViewer;
+    std::function<void(bool)> coverFront;
+};
+
+class NativeHud : public QObject {
+    Q_OBJECT
+  public:
+    struct Row {
+        int index = -1;
+        QJsonObject value;
+        QVector<int> indices;
+    };
+    struct Layout {
+        double left = 40;
+        double sidebar = 250;
+        double x = 326;
+        double width = 0;
+        double top = 260;
+        double rowsY = 434;
+        double rowHeight = 54;
+        int rowCount = 9;
+        double bottom = 956;
+    };
+    NativeHud(Host *host, Glyphs *glyphs, MusicLibrary *music, HudSceneActions scene,
+              QObject *parent = nullptr);
+    void draw(QJsonObject frame, double width, double time);
+    QJsonObject state() const;
+    void action(QString action);
+    void key(QString key, bool command);
+    void wheel(double x, double y, double delta, std::optional<int> steps = std::nullopt,
+               std::optional<double> distance = std::nullopt);
+    void form(QJsonObject fields);
+    void openModal(QString kind);
+    void closeModal();
+    void setQuery(QString value);
+    void pageResults(int direction);
+    bool animating(double time) const;
+    bool supportsTrackList() const;
+    QVector<Row> rows(int lane);
+    QRectF modalBounds(double width) const;
+    QRectF detailBounds(double width) const;
+    Layout containerLayout(double width) const;
+    QJsonArray commands;
+    QJsonArray hits;
+    QJsonObject frame;
+    QString tab = "overview";
+    QString modal;
+    QString query;
+    QString formKind;
+    QString formPID;
+    QString confirmTitle;
+    QString detailSort = "none";
+    QString groupBy = "none";
+    QString activeGroup;
+    QString artistTab = "songs";
+    bool categoryPicker = false;
+    int categoryPage = 0;
+    static constexpr int CategoryPageSize = 40;
+    QString themeMode;
+    int listOffset = 0;
+    int musicCollection = 1;
+    // 六行同专辑
+    static constexpr int AlbumTrackRowCount = 6;
+    static constexpr double AlbumTrackTop = 630;
+    static constexpr double AlbumTrackRowHeight = 48;
+    int trackOffset = 0;
+    int bodyOffset = 0;
+    int queueOffset = 0;
+    // 设置沿用原舞台坐标与行高，只在固定标题下滚动内容。
+    static constexpr double SettingsViewportTop = 176;
+    static constexpr double SettingsViewportBottom = 836;
+    double settingsContentBottom = 1600;
+    double settingsScroll = 0;
+    // 设置页下拉块：非空时该偏好行展开成选项列表（目前只有抗锯齿使用）。
+    QString expandedPreference;
+    double settingsScrollMaximum() const {
+        return settingsContentBottom - SettingsViewportBottom;
+    }
+    bool dark = false;
+    bool reduced = false;
+    bool startupAnimation = false;
+    bool discRotation = false;
+    bool vsync = true;
+    int archiveMaskStrength = 50;
+    bool closing = false;
+    bool lyricsMode = false;
+    bool trackListMode = false;
+    double width = 1920;
+    double lastTime = 0;
+    UiMotion::SurfaceMotion motion;
+    std::optional<QRectF> playerSeekRect;
+    std::optional<QRectF> playerVolumeRect;
+
+  signals:
+    void localImportRequested(bool folder);
+
+  private:
+    struct LyricRow {
+        double top = 0;
+        QStringList text;
+        QStringList translation;
+    };
+    struct TrackRulerRow {
+        double centerY = 0;
+        double textRight = 0;
+        double emphasis = 0;
+        double opacity = 1;
+    };
+    struct SortRequest {
+        QString provider;
+        quint64 account;
+        quint64 generation;
+        QString key;
+        std::shared_ptr<MusicDirectory> directory;
+        int progress = -1;
+    };
+    void beginSort();
+    void continueSort();
+    std::optional<SortRequest> m_sortRequest;
+    struct Page {
+        QString modal;
+        int lane;
+        quint64 generation;
+        int desired;
+    };
+    Host *m_host;
+    Glyphs *m_glyphs;
+    MusicLibrary *m_music;
+    HudSceneActions m_scene;
+    quint64 m_searchGeneration = 0;
+    std::optional<Page> m_page;
+    QString m_trackListScope;
+    int m_trackListTarget = -1;
+    std::optional<UiMotion::ReelCurve> m_trackListCurve;
+    std::function<void()> m_confirm;
+    QCache<QString, QString> m_fitCache{512};
+    std::map<QString, UiMotion::RollingLabel> m_rolling;
+    QString m_sortNotice;
+    QString m_sortContainerKey;
+    QJsonArray m_sortTracks;
+    QString m_sortField;
+    QVector<int> m_trackOrder;
+    QString m_rowsKey;
+    QVector<Row> m_rows;
+    QString m_resultSignature;
+    double m_resultStart = 0;
+    bool m_modalControls = false;
+    QJsonObject m_lyricsDocument;
+    double m_lyricsWidth = 0;
+    QVector<LyricRow> m_lyricsLayout;
+    double m_lyricsScroll = 0;
+    std::optional<double> m_lyricsBrowse;
+    int m_lyricsLastIndex = -1;
+    int m_lyricsLineUpdates = 0;
+    std::optional<double> m_lyricsTarget;
+    std::optional<UiMotion::ReelCurve> m_lyricsCurve;
+    int m_lyricsPlainOffset = 0;
+    void finishPage();
+    void musicAction(const QStringList &parts, const QString &action);
+    void playerAction(const QStringList &parts);
+    QJsonArray ink() const;
+    void op(QJsonArray command);
+    void save();
+    void restore();
+    void alpha(double value);
+    void translate(double x, double y);
+    void scale(double x, double y);
+    void clip(double x, double y, double width, double height);
+    void fill(double x, double y, double width, double height, QJsonArray color = {});
+    void text(QString value, double x, double y, double size, QString weight = "regular", double tracking = 0,
+              QJsonArray color = {});
+    void aligned(QString value, double x, double y, double size, QString weight = "regular",
+                 double tracking = 0);
+    QString fit(QString value, double size, double width, QString weight = "regular");
+    void limited(QString value, double x, double y, double size, double width, QString weight = "regular");
+    void centeredText(QString value, double x, double cy, double size, QString weight = "regular",
+                      bool horizontal = false);
+    void rollingText(QString key, QString value, double x, double y, double size, QString weight = "regular",
+                     double tracking = 0, bool numeric = false);
+    void roll(QString key, QString value, double x, double y, double size, double width,
+              QString weight = "regular", bool numeric = false);
+    void hit(double x, double y, double width, double height, QString action, QString label = {});
+    void button(QString label, double x, double y, double width, double height, QString action, double size,
+                QString weight = "regular");
+    void control(QString label, double x, double y, double width, QString action);
+    void rule(double x, double y, double width, double opacity = 0.4);
+    void image(QString key, double x, double y, double width, double height);
+    void art(QString key, double x, double y, double size, int count = -1, double tracking = 0,
+             QJsonArray color = {});
+    void brand();
+    static double navigationLeft(double width);
+    void archiveMask(double width);
+    void brandLine(int index);
+    void navigation(double width);
+    void footer(double width);
+    void empty(double width);
+    void archive(double width);
+    void archiveTabButton(double width);
+    void archiveTrackList(double x, double width);
+    double archiveTrackPosition(int selected);
+    void archiveTrackRuler(double x, double centerY, const QVector<TrackRulerRow> &rows);
+    void actionButton(QString label, double x, double y, double width, QString action, bool primary = false);
+    void detail(double width, double opacity);
+    void lyricsPanel(double x, double width);
+    QString body() const;
+    void container(double width, double opacity);
+    void viewer(double width);
+    std::array<double, 2> rowMotion(const QString &signature, int index);
+    void modalDraw(double width);
+    void loginPanel(double x, double y, double width);
+    void libraryPanel(double x, double y, double width);
+    void discoverPanel(double x, double y, double width);
+    void localPanel(double x, double y, double width);
+    void playerBar(double x, double y, double width);
+    void playerPanel(double x, double y, double width);
+    void platformChoices(double x, double y, double width, bool expanded = false);
+    void platformPanel(double x, double y, double width);
+    void settings(double x, double y, double width);
+    void qualityPanel(double x, double y, double width);
+    void qualityChoice(const QString &id, int number, double x, double y, double width, bool featured);
+    void logo(double x, double y, double width);
+    void boot(double width);
+    void scan(const QJsonObject &boot);
+    static QString clock(double ms);
+};
