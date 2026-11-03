@@ -280,7 +280,9 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
         }
     }
     int selected = -1;
-    for (qsizetype i = 0; i < queue.size(); ++i) {
+    if (queueIndex && *queueIndex >= 0 && *queueIndex < queue.size() &&
+        identity(queue.at(*queueIndex).toObject()) == identity(track)) selected = *queueIndex;
+    for (qsizetype i = 0; selected < 0 && i < queue.size(); ++i) {
         if (identity(queue.at(i).toObject()) == identity(track)) {
             selected = int(i);
             break;
@@ -290,7 +292,8 @@ void MusicPlayer::play(QJsonObject track, std::optional<QJsonArray> source, std:
         selected = int(queue.size());
         queue.append(track);
     }
-    // The source may have duplicate entries; always use the normalized identity.
+    // Keep the requested queue occurrence when replaying a manually queued song.
+    // For a replaced/deduplicated source, fall back to its normalized identity.
     index = selected;
     m_api->provider = track["provider"].toString();
     m_host->setPlaybackProvider(m_api->provider);
@@ -574,6 +577,9 @@ void MusicPlayer::setPaused(bool paused) {
     if (remoteCommand("pause", {{"paused", paused}})) {
         return;
     }
+    // A pause while resolving the URL must survive the eventual mediaLoad.
+    // Preserve an existing restore/quality-change position if one is present.
+    if (loading && !m_resumePosition) m_resumePosition = 0.;
     if (m_resumePosition) {
         m_resumePaused = paused;
     }
